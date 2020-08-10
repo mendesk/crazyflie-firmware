@@ -1,27 +1,5 @@
 /*
- *    ||          ____  _ __
- * +------+      / __ )(_) /_______________ _____  ___
- * | 0xBC |     / __  / / __/ ___/ ___/ __ `/_  / / _ \
- * +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
- *  ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
- *
- * Crazyflie control firmware
- *
- * Copyright (C) 2011-2012 Bitcraze AB
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, in version 3.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * aideck.c - Deck driver for the AIdeck
+ * esp8266.c - Deck driver for the ESP8266 WiFi module
  */
 #define DEBUG_MODULE "ESP8266"
 
@@ -66,10 +44,9 @@ bit 10: determines whether <wps> will be shown in the result of AT+CWLAP
 
 // Implemented AT commands
 static uint8_t at_test[] = "AT\r\n";
-static uint8_t at_echo_off[] = "ATE0\r\n";
+//static uint8_t at_echo_off[] = "ATE0\r\n";
 static uint8_t at_cwmode[] = "AT+CWMODE_CUR=1\r\n";
 static uint8_t at_cwlapopt[] = "AT+CWLAPOPT=0,30\r\n";
-static uint8_t at_cwlap[] = "AT+CWLAP\r\n";
 
 // Struct for holding the scan responses
 struct wifiSignal {
@@ -81,9 +58,15 @@ struct wifiSignal {
 
 char buffer[MAX_LINE_LENGTH];
 point_t position;
+
+// Parameters
 uint8_t scanOnDemand = 0; // 0 for periodic scanning, 1 for on demand scanning
 uint8_t scanInterval = 5;  // how long to wait between end of scan and beginning of next scan (only if scanOnDemand==0)
 uint8_t scanNow = 0;  // set to 1 to do an immediate scan
+uint8_t scanNowDelay = 0;  // how many seconds to wait before doing scan
+uint8_t atScanType = 0;  // AT+CWLAP <scan_type>: 0=active, 1=passive
+uint16_t atScanTimeMin = 0;  // AT+CWLAP <scan_time_min>
+uint16_t atScanTimeMax = 120;  // AT+CWLAP <scan_time_max>
 
 uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
     /*
@@ -142,7 +125,7 @@ uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
                 case 0:
                     (signal->ssid)[parameterIndex++] = '\0';
                 case 1:
-                    signal->rssi = atoi(parameterBuffer);
+                    signal->rssi = (int8_t)atoi((char*)parameterBuffer);
                     break;
                 case 2:
                     // DEBUG_PRINT("MAC: [%s]\n", (char*)parameterBuffer);
@@ -157,7 +140,7 @@ uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
                     }
                     break;
                 case 3:
-                    signal->channel = atoi(parameterBuffer);
+                    signal->channel = (uint8_t)atoi((char*)parameterBuffer);
                     break;
             }
 
@@ -257,17 +240,27 @@ void scanWifiAccessPoints(void* arg) {
             continue;
         }
         else if (scanOnDemand == 1 && scanNow == 1) {
+            // Delay if we need to
+            if (scanNowDelay > 0) {
+                consolePrintf("Waiting %d seconds before starting scan", scanNowDelay);
+                vTaskDelay(M2T(scanNowDelay * 1000));
+            }
             // Reset parameter and start scanning
             scanNow = 0;
         }
 
         // Scan!
+        // Build scan instruction
+        // AT+CWLAP[=<ssid>,<mac>,<channel>,<scan_type>,<scan_time_min>,<scan_time_max>]
+        uint8_t at_cwlap[26];
+        sprintf((char*)at_cwlap, "AT+CWLAP=,,,%u,%u,%u\r\n", atScanType, atScanTimeMin, atScanTimeMax);
+
         // Get our position from the Kalman estimator
         estimatorKalmanGetEstimatedPos(&position);
 
         // Scan access points
         consolePrintf("%s", at_cwlap);
-        consolePrintf("POS: x=%f y=%f z=%f\n", position.x, position.y, position.z);
+        consolePrintf("POS: x=%f y=%f z=%f\n", (double)position.x, (double)position.y, (double)position.z);
         uart2SendData(sizeof(at_cwlap), at_cwlap);
 
         // Read the response
@@ -334,4 +327,8 @@ PARAM_GROUP_START(esp8266)
     PARAM_ADD(PARAM_UINT8, scanOnDemand, &scanOnDemand)
     PARAM_ADD(PARAM_UINT8, scanInterval, &scanInterval)
     PARAM_ADD(PARAM_UINT8, scanNow, &scanNow)
+    PARAM_ADD(PARAM_UINT8, scanNowDelay, &scanNowDelay)
+    PARAM_ADD(PARAM_UINT8, atScanType, &atScanType)
+    PARAM_ADD(PARAM_UINT16, atScanTimeMin, &atScanTimeMin)
+    PARAM_ADD(PARAM_UINT16, atScanTimeMax, &atScanTimeMax)
 PARAM_GROUP_STOP(esp8266)
