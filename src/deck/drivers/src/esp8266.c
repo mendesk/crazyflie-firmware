@@ -60,7 +60,7 @@ char buffer[MAX_LINE_LENGTH];
 point_t position;
 
 // Parameters
-uint8_t scanOnDemand = 0; // 0 for periodic scanning, 1 for on demand scanning
+uint8_t scanOnDemand = 1; // 0 for periodic scanning, 1 for on demand scanning
 uint8_t scanInterval = 5;  // how long to wait between end of scan and beginning of next scan (only if scanOnDemand==0)
 uint8_t scanNow = 0;  // set to 1 to do an immediate scan
 uint8_t scanNowDelay = 0;  // how many seconds to wait before doing scan
@@ -105,6 +105,7 @@ uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
             else {
                 // error
                 consolePrintf("Parse error! Parameters parsed: %u\n", parametersParsed);
+                consolePrintf("Line: %s", lineBuffer);
                 return 0;
             }
         }
@@ -235,8 +236,8 @@ void scanWifiAccessPoints(void* arg) {
 
     while(1) {
         if (scanOnDemand == 1 && scanNow == 0) {
-            // No scan requested, let's wait 200ms before we check again
-            vTaskDelay(M2T(200));
+            // No scan requested, let's wait 100ms before we check again
+            vTaskDelay(M2T(100));
             continue;
         }
         else if (scanOnDemand == 1 && scanNow == 1) {
@@ -245,8 +246,6 @@ void scanWifiAccessPoints(void* arg) {
                 consolePrintf("Waiting %d seconds before starting scan", scanNowDelay);
                 vTaskDelay(M2T(scanNowDelay * 1000));
             }
-            // Reset parameter and start scanning
-            scanNow = 0;
         }
 
         // Scan!
@@ -273,6 +272,8 @@ void scanWifiAccessPoints(void* arg) {
             vTaskDelay(M2T(scanInterval * 1000));
         }
         else {
+            // Reset parameter
+            scanNow = 0;
             consolePrintf("Finished scanning, waiting for next scan request...\n");
         }
     }
