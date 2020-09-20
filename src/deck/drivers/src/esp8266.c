@@ -205,6 +205,7 @@ void readUntilOk(char *lineBuffer, uint8_t cwlap) {
             }
             else {
                 // DEBUG_PRINT("P: -\n");
+                consolePrintf("P: %s\n", lineBuffer);
             }
         }
     }
@@ -262,9 +263,16 @@ void scanWifiAccessPoints(void* arg) {
         consolePrintf("POS: x=%f y=%f z=%f\n", (double)position.x, (double)position.y, (double)position.z);
         uart2SendData(sizeof(at_cwlap), at_cwlap);
 
+        // Check echo
+        vTaskDelay(M2T(1000)); // wait 1 sec for feedback
+        readLine(buffer);
+        if (strncmp(buffer, "AT+CWLAP", 8) != 0) {
+            consolePrintf("Echo not received, skipping\n");
+            continue;
+        }
+
         // Read the response
         readUntilOk(buffer, 1);
-
 
         if (scanOnDemand == 0) {
             // Wait scanInterval seconds before doing another scan
