@@ -127,6 +127,9 @@ void uart2Getchar(char * ch);
  */
 bool uart2DidOverrun();
 
+void uart2ResetQueue();
+UBaseType_t uart2MessageCount();
+
 #endif
 
 /**

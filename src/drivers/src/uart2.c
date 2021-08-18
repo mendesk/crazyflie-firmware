@@ -359,6 +359,17 @@ bool uart2DidOverrun()
   return result;
 }
 
+void uart2ResetQueue()
+{
+    xQueueReset(uart2queue);
+}
+
+UBaseType_t uart2MessageCount()
+{
+    return uxQueueMessagesWaiting(uart2queue);
+}
+
+
 #endif
 
 void __attribute__((used)) DMA1_Stream6_IRQHandler(void)

@@ -23,8 +23,9 @@
 #include "system.h"
 #include "uart2.h"
 #include "estimator_kalman.h"
+#include "commander.h"
 
-#define MAX_LINE_LENGTH 100
+#define MAX_LINE_LENGTH 80
 
 static bool isInit = false;
 
@@ -43,10 +44,10 @@ bit 10: determines whether <wps> will be shown in the result of AT+CWLAP
 */
 
 // Implemented AT commands
-static uint8_t at_test[] = "AT\r\n";
-//static uint8_t at_echo_off[] = "ATE0\r\n";
-static uint8_t at_cwmode[] = "AT+CWMODE_CUR=1\r\n";
-static uint8_t at_cwlapopt[] = "AT+CWLAPOPT=0,30\r\n";
+static const uint8_t at_test[] = "AT\r\n";
+//static const uint8_t at_echo_off[] = "ATE0\r\n";
+static const uint8_t at_cwmode[] = "AT+CWMODE_CUR=1\r\n";
+static const uint8_t at_cwlapopt[] = "AT+CWLAPOPT=0,30\r\n";
 
 // Struct for holding the scan responses
 struct wifiSignal {
@@ -56,24 +57,54 @@ struct wifiSignal {
     uint8_t channel;  // 3: WiFi channel
 };
 
-char buffer[MAX_LINE_LENGTH];
-point_t position;
+static char buffer[MAX_LINE_LENGTH];
+static point_t volatile position;
 
 // Parameters
-uint8_t scanOnDemand = 1; // 0 for periodic scanning, 1 for on demand scanning
-uint8_t scanInterval = 5;  // how long to wait between end of scan and beginning of next scan (only if scanOnDemand==0)
-uint8_t scanNow = 0;  // set to 1 to do an immediate scan
-uint8_t scanNowDelay = 0;  // how many seconds to wait before doing scan
-uint8_t atScanType = 0;  // AT+CWLAP <scan_type>: 0=active, 1=passive
-uint16_t atScanTimeMin = 0;  // AT+CWLAP <scan_time_min>
-uint16_t atScanTimeMax = 120;  // AT+CWLAP <scan_time_max>
+static uint8_t scanOnDemand = 1; // 0 for periodic scanning, 1 for on demand scanning
+static uint8_t scanInterval = 5;  // how long to wait between end of scan and beginning of next scan (only if scanOnDemand==0)
+static uint8_t scanNow = 0;  // set to 1 to do an immediate scan
+static uint8_t scanNowDelay = 0;  // how many seconds to wait before doing scan
+static uint8_t atScanType = 0;  // AT+CWLAP <scan_type>: 0=active, 1=passive
+static uint16_t atScanTimeMin = 0;  // AT+CWLAP <scan_time_min>
+static uint16_t atScanTimeMax = 120;  // AT+CWLAP <scan_time_max>
 
-uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
+static void getHoverSetpoint(setpoint_t* setpoint, float x, float y, float z) {
+    setpoint->mode.x = modeAbs;
+    setpoint->mode.y = modeAbs;
+    setpoint->mode.z = modeAbs;
+
+    setpoint->position.x = x;
+    setpoint->position.y = y;
+    setpoint->position.z = z;
+
+    setpoint->mode.yaw = modeAbs;
+    setpoint->attitude.yaw = 270;
+}
+
+static void hoverWhileScanning(void* arg) {
+    // consolePrintf("HoverStackHighWaterMark: %lu\n", uxTaskGetStackHighWaterMark(NULL));
+    setpoint_t hoverSetpoint;
+
+    for (uint8_t i=0; i<20; ++i) {
+        // Hover while we are scanning
+        getHoverSetpoint(&hoverSetpoint, position.x, position.y, position.z);
+        commanderSetSetpoint(&hoverSetpoint, 3);
+        /*if (i % 10 == 0) {
+            consolePrintf("Hovered for %u s\n", i/10);
+        }*/
+        vTaskDelay(M2T(100));
+    }
+    vTaskDelete(NULL);
+}
+
+
+static uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
     /*
      * Parses a line to a wifiSignal. Returns 1 if successful, 0 if there was a parse error
      */
-    uint8_t bracketOpen = 0;
-    uint8_t quoteOpen = 0;
+    bool bracketOpen = false;
+    bool quoteOpen = false;
     uint8_t parametersParsed = 0;
     uint8_t parameterIndex = 0;
     uint8_t parameterBuffer[18];  // We'll use this for rssi, mac and channel
@@ -84,7 +115,7 @@ uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
         if (! bracketOpen) {
             // We're not at the meat (yet), skip this part of the output
             if (lineBuffer[i] == '(') {
-                bracketOpen = 1;
+                bracketOpen = true;
             }
             continue;
         }
@@ -92,7 +123,7 @@ uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
         if (quoteOpen) {
             // We're in a string (ssid or mac address)
             if (lineBuffer[i] == '"') {
-                quoteOpen = 0;
+                quoteOpen = false;
             }
             else if (parametersParsed == 0) {
                 // ssid
@@ -105,17 +136,17 @@ uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
             else {
                 // error
                 consolePrintf("Parse error! Parameters parsed: %u\n", parametersParsed);
-                consolePrintf("Line: %s", lineBuffer);
+                consolePrintf("Line: %s\n", lineBuffer);
                 return 0;
             }
         }
         else if (lineBuffer[i] == '"') {
-            quoteOpen = 1;
+            quoteOpen = true;
         }
         else if (lineBuffer[i] == ',' || lineBuffer[i] == ')') {
             // Last parameter will end with ')' instead of ','
             if (lineBuffer[i] == ')')
-                bracketOpen = 0;
+                bracketOpen = false;
 
             // Done with this parameter, process it
             parameterBuffer[parameterIndex] = '\0';
@@ -154,11 +185,14 @@ uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
         }
     }
     // DEBUG_PRINT("Done! Parameters parsed: %u\n", parametersParsed);
+//    (signal->ssid)[0] = '"';
+//    (signal->ssid)[1] = '"';
+//    (signal->ssid)[2] = '\0';
     return parametersParsed;
 }
 
 
-void readLine(char *lineBuffer) {
+static void readLine(char *lineBuffer) {
     char ch;
     lineBuffer[0] = '\0';
 
@@ -187,7 +221,7 @@ void readLine(char *lineBuffer) {
     }
 }
 
-void readUntilOk(char *lineBuffer, uint8_t cwlap) {
+static void readUntilOk(char *lineBuffer, uint8_t cwlap) {
     DEBUG_PRINT("-- START READING --\n");
     lineBuffer[0] = '\0';
     struct wifiSignal signal = {};
@@ -213,25 +247,25 @@ void readUntilOk(char *lineBuffer, uint8_t cwlap) {
     DEBUG_PRINT("-- STOP READING --\n");
 }
 
-void scanWifiAccessPoints(void* arg) {
+static void scanWifiAccessPoints(void* arg) {
     // Wait 5 seconds for an orderly startup
     vTaskDelay(M2T(5000));
 
-    // Turn echo off
-    // consolePrintf("%s", at_echo_off);
-    // uart2SendData(sizeof(at_echo_off), at_echo_off);
-    // vTaskDelay(500);
-    // readUntilOk(buffer);
+    // Send test command
+    DEBUG_PRINT("%s", at_test);
+    uart2SendDataDmaBlocking(sizeof(at_test), at_test);
+    vTaskDelay(500);
+    readUntilOk(buffer, 0);
 
     // Set station mode
     consolePrintf("%s", at_cwmode);
-    uart2SendData(sizeof(at_cwmode), at_cwmode);
+    uart2SendDataDmaBlocking(sizeof(at_cwmode), at_cwmode);
     vTaskDelay(500);
     readUntilOk(buffer, 0);
 
     // Set CWLAP options
     consolePrintf("%s", at_cwlapopt);
-    uart2SendData(sizeof(at_cwlapopt), at_cwlapopt);
+    uart2SendDataDmaBlocking(sizeof(at_cwlapopt), at_cwlapopt);
     vTaskDelay(500);
     readUntilOk(buffer, 0);
 
@@ -247,31 +281,58 @@ void scanWifiAccessPoints(void* arg) {
                 consolePrintf("Waiting %d seconds before starting scan", scanNowDelay);
                 vTaskDelay(M2T(scanNowDelay * 1000));
             }
+            // Reset parameter
+            scanNow = 0;
         }
+        consolePrintf("ScanStackHighWaterMark: %lu\n", uxTaskGetStackHighWaterMark(NULL));
+        consolePrintf("uart2DidOverrun: %s\n", uart2DidOverrun() ? "true" : "false");
 
         // Scan!
         // Build scan instruction
         // AT+CWLAP[=<ssid>,<mac>,<channel>,<scan_type>,<scan_time_min>,<scan_time_max>]
-        uint8_t at_cwlap[26];
+        uint8_t at_cwlap[30];
         sprintf((char*)at_cwlap, "AT+CWLAP=,,,%u,%u,%u\r\n", atScanType, atScanTimeMin, atScanTimeMax);
 
         // Get our position from the Kalman estimator
         estimatorKalmanGetEstimatedPos(&position);
 
+        if (scanOnDemand == 1) {
+            // Start hovering while we scan
+            xTaskCreate(hoverWhileScanning, "ESP_HOVER",
+                        configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+        }
+
         // Scan access points
         consolePrintf("%s", at_cwlap);
         consolePrintf("POS: x=%f y=%f z=%f\n", (double)position.x, (double)position.y, (double)position.z);
-        uart2SendData(sizeof(at_cwlap), at_cwlap);
+        uart2ResetQueue();
+        vTaskDelay(M2T(100));
+        //consolePrintf("UART2 (send AT): cou305StackHighWateStackHighWaterMarknt: %ld overrun: %d\n", uart2MessageCount(), uart2DidOverrun());
+        uart2SendDataDmaBlocking(sizeof(at_cwlap), at_cwlap);
+        //vTaskDelay(M2T(100));
+
+        // Wait for reply
+        while (uart2MessageCount() < 8) {
+            vTaskDelay(M2T(100));
+        }
 
         // Check echo
-        vTaskDelay(M2T(1000)); // wait 1 sec for feedback
+        //vTaskDelay(M2T(200)); // wait 1 sec for feedback
+        //consolePrintf("UART2 (echo check): count: %ld overrun: %d\n", uart2MessageCount(), uart2DidOverrun());
         readLine(buffer);
         if (strncmp(buffer, "AT+CWLAP", 8) != 0) {
             consolePrintf("Echo not received, skipping\n");
+            consolePrintf("ERR: %s\n", buffer);
             continue;
         }
 
+        // Wait for reply
+        /*while (uart2MessageCount() == 0) {
+            vTaskDelay(M2T(100));
+        }*/
+
         // Read the response
+        //consolePrintf("UART2 (until OK): count: %ld overrun: %d\n", uart2MessageCount(), uart2DidOverrun());
         readUntilOk(buffer, 1);
 
         if (scanOnDemand == 0) {
@@ -280,9 +341,8 @@ void scanWifiAccessPoints(void* arg) {
             vTaskDelay(M2T(scanInterval * 1000));
         }
         else {
-            // Reset parameter
+            //consolePrintf("Finished scanning, waiting for next scan request...\n");
             scanNow = 0;
-            consolePrintf("Finished scanning, waiting for next scan request...\n");
         }
     }
 }
@@ -297,17 +357,11 @@ static void esp8266Init(DeckInfo *info)
     uart2Init(115200);
     vTaskDelay(500);
 
-    // Send test command
-    DEBUG_PRINT("%s", at_test);
-    uart2SendData(sizeof(at_test), at_test);
-    vTaskDelay(500);
-    readUntilOk(buffer, 0);
-
-    DEBUG_PRINT("ESP8266 Deck initialized\n");
+    DEBUG_PRINT("ESP8266 Deck initialized, UART2: %s\n", uart2Test() ? "OK!" : "NOT OK!");
 
     // Create task to measure SSID / MAC / RSSI
-    xTaskCreate(scanWifiAccessPoints, "scan wifi access points",
-                4 * configMINIMAL_STACK_SIZE, NULL, 3, NULL);
+    xTaskCreate(scanWifiAccessPoints, "ESP_SCAN", 3 * configMINIMAL_STACK_SIZE, NULL, 3, NULL);
+    DEBUG_PRINT("Stacksize: %u\n", 3 * configMINIMAL_STACK_SIZE);
 
     isInit = true;
 }
