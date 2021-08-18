@@ -26,5 +26,11 @@ current_platform.mk
 docs/.jekyll-cache
 docs/api
 
+/examples/app_hello_world/bin/*
+/examples/app_hello_world/cf2.*
+
+/examples/app_peer_to_peer/bin/*
+/examples/app_peer_to_peer/cf2.*
+
 .idea
 cload.sh
