@@ -83,19 +83,27 @@ static void getHoverSetpoint(setpoint_t* setpoint, float x, float y, float z) {
 }
 
 static void hoverWhileScanning(void* arg) {
-    // consolePrintf("HoverStackHighWaterMark: %lu\n", uxTaskGetStackHighWaterMark(NULL));
+    consolePrintf("HoverStackHighWaterMark: %lu\n", uxTaskGetStackHighWaterMark(NULL));
     setpoint_t hoverSetpoint;
 
-    for (uint8_t i=0; i<20; ++i) {
+    while(1) {
         // Hover while we are scanning
         getHoverSetpoint(&hoverSetpoint, position.x, position.y, position.z);
         commanderSetSetpoint(&hoverSetpoint, 3);
-        /*if (i % 10 == 0) {
-            consolePrintf("Hovered for %u s\n", i/10);
-        }*/
         vTaskDelay(M2T(100));
     }
-    vTaskDelete(NULL);
+
+//    for (uint8_t i=0; i<30; ++i) {
+//        // Hover while we are scanning
+//        getHoverSetpoint(&hoverSetpoint, position.x, position.y, position.z);
+//        commanderSetSetpoint(&hoverSetpoint, 3);
+//        /*if (i % 10 == 0) {
+//            consolePrintf("Hovered for %u s\n", i/10);
+//        }*/
+//        vTaskDelay(M2T(100));
+//    }
+//    vTaskDelete(NULL);
+
 }
 
 
@@ -269,6 +277,19 @@ static void scanWifiAccessPoints(void* arg) {
     vTaskDelay(500);
     readUntilOk(buffer, 0);
 
+    // Create hovering task
+    BaseType_t xReturned;
+    TaskHandle_t xHoverTask = NULL;
+    xReturned = xTaskCreate(hoverWhileScanning, "ESP_HOVER", configMINIMAL_STACK_SIZE, NULL, 0, &xHoverTask);
+    if (xReturned == pdPASS) {
+        vTaskSuspend(xHoverTask);
+        vTaskPrioritySet(xHoverTask, 2);
+        DEBUG_PRINT("Task ESP_HOVER created successfully");
+    }
+    else {
+        DEBUG_PRINT("Failed to create task ESP_HOVER!");
+    }
+
     while(1) {
         if (scanOnDemand == 1 && scanNow == 0) {
             // No scan requested, let's wait 100ms before we check again
@@ -298,8 +319,8 @@ static void scanWifiAccessPoints(void* arg) {
 
         if (scanOnDemand == 1) {
             // Start hovering while we scan
-            xTaskCreate(hoverWhileScanning, "ESP_HOVER",
-                        configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+            consolePrintf("HoverStackHighWaterMark: %lu\n", uxTaskGetStackHighWaterMark(xHoverTask));
+            vTaskResume(xHoverTask);
         }
 
         // Scan access points
@@ -307,9 +328,7 @@ static void scanWifiAccessPoints(void* arg) {
         consolePrintf("POS: x=%f y=%f z=%f\n", (double)position.x, (double)position.y, (double)position.z);
         uart2ResetQueue();
         vTaskDelay(M2T(100));
-        //consolePrintf("UART2 (send AT): cou305StackHighWateStackHighWaterMarknt: %ld overrun: %d\n", uart2MessageCount(), uart2DidOverrun());
         uart2SendDataDmaBlocking(sizeof(at_cwlap), at_cwlap);
-        //vTaskDelay(M2T(100));
 
         // Wait for reply
         while (uart2MessageCount() < 8) {
@@ -317,7 +336,6 @@ static void scanWifiAccessPoints(void* arg) {
         }
 
         // Check echo
-        //vTaskDelay(M2T(200)); // wait 1 sec for feedback
         //consolePrintf("UART2 (echo check): count: %ld overrun: %d\n", uart2MessageCount(), uart2DidOverrun());
         readLine(buffer);
         if (strncmp(buffer, "AT+CWLAP", 8) != 0) {
@@ -325,11 +343,6 @@ static void scanWifiAccessPoints(void* arg) {
             consolePrintf("ERR: %s\n", buffer);
             continue;
         }
-
-        // Wait for reply
-        /*while (uart2MessageCount() == 0) {
-            vTaskDelay(M2T(100));
-        }*/
 
         // Read the response
         //consolePrintf("UART2 (until OK): count: %ld overrun: %d\n", uart2MessageCount(), uart2DidOverrun());
@@ -343,6 +356,7 @@ static void scanWifiAccessPoints(void* arg) {
         else {
             //consolePrintf("Finished scanning, waiting for next scan request...\n");
             scanNow = 0;
+            vTaskSuspend(xHoverTask);
         }
     }
 }
