@@ -85,25 +85,21 @@ static void getHoverSetpoint(setpoint_t* setpoint, float x, float y, float z) {
 static void hoverWhileScanning(void* arg) {
     consolePrintf("HoverStackHighWaterMark: %lu\n", uxTaskGetStackHighWaterMark(NULL));
     setpoint_t hoverSetpoint;
+    uint8_t hoverCount = 0;
 
     while(1) {
         // Hover while we are scanning
         getHoverSetpoint(&hoverSetpoint, position.x, position.y, position.z);
+
+        if (hoverCount == 10) {
+            consolePrintf("Hovering at position x: %f, y: %f, z: %f\n", hoverSetpoint.position.x, hoverSetpoint.position.y, hoverSetpoint.position.z);
+            hoverCount = 0;
+        }
+
         commanderSetSetpoint(&hoverSetpoint, 3);
+        hoverCount++;
         vTaskDelay(M2T(100));
     }
-
-//    for (uint8_t i=0; i<30; ++i) {
-//        // Hover while we are scanning
-//        getHoverSetpoint(&hoverSetpoint, position.x, position.y, position.z);
-//        commanderSetSetpoint(&hoverSetpoint, 3);
-//        /*if (i % 10 == 0) {
-//            consolePrintf("Hovered for %u s\n", i/10);
-//        }*/
-//        vTaskDelay(M2T(100));
-//    }
-//    vTaskDelete(NULL);
-
 }
 
 
@@ -260,7 +256,7 @@ static void scanWifiAccessPoints(void* arg) {
     vTaskDelay(M2T(5000));
 
     // Send test command
-    DEBUG_PRINT("%s", at_test);
+    consolePrintf("%s", at_test);
     uart2SendDataDmaBlocking(sizeof(at_test), at_test);
     vTaskDelay(500);
     readUntilOk(buffer, 0);
@@ -299,7 +295,7 @@ static void scanWifiAccessPoints(void* arg) {
         else if (scanOnDemand == 1 && scanNow == 1) {
             // Delay if we need to
             if (scanNowDelay > 0) {
-                consolePrintf("Waiting %d seconds before starting scan", scanNowDelay);
+                consolePrintf("Waiting %d seconds before starting scan\n", scanNowDelay);
                 vTaskDelay(M2T(scanNowDelay * 1000));
             }
             // Reset parameter
@@ -320,6 +316,7 @@ static void scanWifiAccessPoints(void* arg) {
         if (scanOnDemand == 1) {
             // Start hovering while we scan
             consolePrintf("HoverStackHighWaterMark: %lu\n", uxTaskGetStackHighWaterMark(xHoverTask));
+            consolePrintf("Enable hovering...\n");
             vTaskResume(xHoverTask);
         }
 
@@ -356,6 +353,7 @@ static void scanWifiAccessPoints(void* arg) {
         else {
             //consolePrintf("Finished scanning, waiting for next scan request...\n");
             scanNow = 0;
+            consolePrintf("Disable hovering...\n");
             vTaskSuspend(xHoverTask);
         }
     }
@@ -371,11 +369,11 @@ static void esp8266Init(DeckInfo *info)
     uart2Init(115200);
     vTaskDelay(500);
 
-    DEBUG_PRINT("ESP8266 Deck initialized, UART2: %s\n", uart2Test() ? "OK!" : "NOT OK!");
+    consolePrintf("ESP8266 Deck initialized, UART2: %s\n", uart2Test() ? "OK!" : "NOT OK!");
 
     // Create task to measure SSID / MAC / RSSI
     xTaskCreate(scanWifiAccessPoints, "ESP_SCAN", 3 * configMINIMAL_STACK_SIZE, NULL, 3, NULL);
-    DEBUG_PRINT("Stacksize: %u\n", 3 * configMINIMAL_STACK_SIZE);
+    consolePrintf("Stacksize: %u\n", 3 * configMINIMAL_STACK_SIZE);
 
     isInit = true;
 }
@@ -383,7 +381,7 @@ static void esp8266Init(DeckInfo *info)
 static bool esp8266Test()
 {
     if (isInit) {
-        DEBUG_PRINT("ESP8266 Deck test passed\n");
+        consolePrintf("ESP8266 Deck test passed\n");
         return true;
     }
     return false;
@@ -400,12 +398,36 @@ static const DeckDriver esp8266_deck = {
 
 DECK_DRIVER(esp8266_deck);
 
+/**
+ * Param group for the ESP8266 module
+ */
 PARAM_GROUP_START(esp8266)
+    /**
+     * @brief Enable scanning on demand (with the scanNow parameter and disable periodic scanning
+     */
     PARAM_ADD(PARAM_UINT8, scanOnDemand, &scanOnDemand)
+    /**
+     * @brief Scanning interval to use for periodic scanning
+     */
     PARAM_ADD(PARAM_UINT8, scanInterval, &scanInterval)
+    /**
+     * @brief When scanning on demand is enabled, setting scanNow to 1 will trigger a scan
+     */
     PARAM_ADD(PARAM_UINT8, scanNow, &scanNow)
+    /**
+     * @brief How long to wait after receiving a scanNow and doing the actual scan
+     */
     PARAM_ADD(PARAM_UINT8, scanNowDelay, &scanNowDelay)
+    /**
+     * @brief Scan type to use (ESP8266 optionà
+     */
     PARAM_ADD(PARAM_UINT8, atScanType, &atScanType)
+    /**
+     * @brief scanTimeMin to use (ESP8266 optionà
+     */
     PARAM_ADD(PARAM_UINT16, atScanTimeMin, &atScanTimeMin)
+    /**
+     * @brief scanTimeMax to use (ESP8266 optionà
+     */
     PARAM_ADD(PARAM_UINT16, atScanTimeMax, &atScanTimeMax)
 PARAM_GROUP_STOP(esp8266)
