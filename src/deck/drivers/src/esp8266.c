@@ -92,7 +92,8 @@ static void hoverWhileScanning(void* arg) {
         getHoverSetpoint(&hoverSetpoint, position.x, position.y, position.z);
 
         if (hoverCount == 10) {
-            consolePrintf("Hovering at position x: %f, y: %f, z: %f\n", hoverSetpoint.position.x, hoverSetpoint.position.y, hoverSetpoint.position.z);
+            consolePrintf("Hovering at position x: %f, y: %f, z: %f\n",
+                (double)hoverSetpoint.position.x, (double)hoverSetpoint.position.y, (double)hoverSetpoint.position.z);
             hoverCount = 0;
         }
 
@@ -167,7 +168,8 @@ static uint8_t parseLine(char *lineBuffer, struct wifiSignal *signal) {
                     // DEBUG_PRINT("MAC: [%s]\n", (char*)parameterBuffer);
                     sscanf((char*)parameterBuffer,
                            "%x:%x:%x:%x:%x:%x",
-                           &mac[0],&mac[1],&mac[2],&mac[3],&mac[4],&mac[5]);
+                           (unsigned int*)&mac[0],(unsigned int*)&mac[1],(unsigned int*)&mac[2],
+                           (unsigned int*)&mac[3],(unsigned int*)&mac[4],(unsigned int*)&mac[5]);
 
                     signal->mac = 0;
                     for (uint8_t j = 0; j<6; j++) {
@@ -257,19 +259,19 @@ static void scanWifiAccessPoints(void* arg) {
 
     // Send test command
     consolePrintf("%s", at_test);
-    uart2SendDataDmaBlocking(sizeof(at_test), at_test);
+    uart2SendDataDmaBlocking(sizeof(at_test), (uint8_t *) at_test);
     vTaskDelay(500);
     readUntilOk(buffer, 0);
 
     // Set station mode
     consolePrintf("%s", at_cwmode);
-    uart2SendDataDmaBlocking(sizeof(at_cwmode), at_cwmode);
+    uart2SendDataDmaBlocking(sizeof(at_cwmode), (uint8_t *) at_cwmode);
     vTaskDelay(500);
     readUntilOk(buffer, 0);
 
     // Set CWLAP options
     consolePrintf("%s", at_cwlapopt);
-    uart2SendDataDmaBlocking(sizeof(at_cwlapopt), at_cwlapopt);
+    uart2SendDataDmaBlocking(sizeof(at_cwlapopt), (uint8_t *) at_cwlapopt);
     vTaskDelay(500);
     readUntilOk(buffer, 0);
 
@@ -311,7 +313,7 @@ static void scanWifiAccessPoints(void* arg) {
         sprintf((char*)at_cwlap, "AT+CWLAP=,,,%u,%u,%u\r\n", atScanType, atScanTimeMin, atScanTimeMax);
 
         // Get our position from the Kalman estimator
-        estimatorKalmanGetEstimatedPos(&position);
+        estimatorKalmanGetEstimatedPos((point_t *) &position);
 
         if (scanOnDemand == 1) {
             // Start hovering while we scan
