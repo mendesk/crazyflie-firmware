@@ -78,8 +78,8 @@ static void getHoverSetpoint(setpoint_t* setpoint, float x, float y, float z) {
     setpoint->position.y = y;
     setpoint->position.z = z;
 
-    setpoint->mode.yaw = modeAbs;
-    setpoint->attitude.yaw = 45;  // degrees
+    setpoint->mode.yaw = modeVelocity;
+    setpoint->attitudeRate.yaw = 0;
 }
 
 static void hoverWhileScanning(void* arg) {
